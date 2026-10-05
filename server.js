@@ -1,9 +1,11 @@
+const path = require('path'), fs = require('fs');
 const express = require('express'), mysql = require('mysql2/promise'),
   bcrypt = require('bcryptjs'), jwt = require('jsonwebtoken'), crypto = require('crypto');
 
 const app = express();
 app.use(express.json());
-app.use(express.static('public'));
+const page = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+app.get('/', (req, res) => res.type('html').send(page));
 
 const db = mysql.createPool({
   host: process.env.DB_HOST || 'localhost', port: +process.env.DB_PORT || 3306,
