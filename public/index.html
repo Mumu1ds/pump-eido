@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PUMP EIDO — Treino. Dieta. Evolução.</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230b0b0c'/><path d='M9 24V8h8a5 5 0 010 10h-4' stroke='%23c6ff00' stroke-width='3' fill='none'/></svg>">
+<style>
+:root{--bg:#0b0b0c;--card:#17181a;--line:#2a2c2f;--tx:#f4f4f5;--mut:#9a9da3;--lime:#c6ff00;--red:#ff5d5d}
+*{box-sizing:border-box;margin:0}
+body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;padding-bottom:80px}
+.logo{font-weight:900;letter-spacing:2px}.logo b{color:var(--lime)}
+main{max-width:960px;margin:auto;padding:20px}
+header{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line)}
+nav{display:flex;gap:6px;position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--line);padding:8px;justify-content:space-around}
+nav button{flex:1;background:none;border:0;color:var(--mut);padding:12px;font-size:14px;border-radius:10px;cursor:pointer}
+nav button.on{color:var(--bg);background:var(--lime);font-weight:700}
+@media(min-width:800px){nav{position:static;border:0;background:none;justify-content:flex-start;padding:12px 20px}nav button{flex:none;padding:10px 18px}body{padding-bottom:0}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.big{font-size:32px;font-weight:800;color:var(--lime)}.mut{color:var(--mut);font-size:14px}
+input,select{width:100%;padding:13px;margin:6px 0;background:#0f1011;border:1px solid var(--line);border-radius:10px;color:var(--tx);font-size:16px}
+.btn{background:var(--lime);color:#000;border:0;padding:13px 20px;border-radius:12px;font-weight:700;font-size:15px;cursor:pointer;transition:transform .1s}
+.btn:active{transform:scale(.97)}.btn.ghost{background:none;color:var(--tx);border:1px solid var(--line)}.btn.sm{padding:8px 12px;font-size:13px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>*{flex:1}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px}
+.bar{height:10px;background:#0f1011;border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:var(--lime);transition:width .4s}
+.login{max-width:380px;margin:8vh auto;padding:20px}
+#toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:var(--lime);color:#000;padding:12px 20px;border-radius:12px;font-weight:700;display:none;z-index:9}
+#toast.err{background:var(--red);color:#fff}
+.chart{display:flex;align-items:flex-end;gap:6px;height:100px;margin-top:10px}
+.chart i{flex:1;background:var(--lime);border-radius:4px 4px 0 0;min-height:4px}
+.done{opacity:.5}
+</style>
+</head>
+<body>
+<div id="toast"></div>
+<div id="app"></div>
+<script>
+const $=s=>document.querySelector(s), app=$('#app');
+let user=JSON.parse(localStorage.getItem('pe_user')||'null'), tab='';
+const toast=(m,e)=>{const t=$('#toast');t.textContent=m;t.className=e?'err':'';t.style.display='block';setTimeout(()=>t.style.display='none',2800)};
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path,body){
+  const r=await fetch('/api/'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json',Authorization:'Bearer '+(localStorage.getItem('pe_token')||'')},body:body?JSON.stringify(body):undefined});
+  const d=await r.json().catch(()=>({}));
+  if(r.status===401&&user){logout();}
+  if(!r.ok){toast(d.error||'Algo deu errado.',1);throw d}
+  return d;
+}
+const logout=()=>{localStorage.clear();user=null;boot()};
+const logo='<span class="logo">PUMP <b>EIDO</b></span>';
+
+function authView(mode='login'){
+  const reg=mode==='register';
+  app.innerHTML=`<div class="login"><div style="text-align:center;font-size:28px;margin-bottom:6px">${logo}</div>
+  <p class="mut" style="text-align:center;margin-bottom:20px">Treino. Dieta. Evolução. Tudo em um só lugar.</p>
+  <div class="card">${reg?'<input id="n" placeholder="Seu nome"><select id="r"><option value="trainer">Sou profissional</option><option value="student">Sou aluno</option></select>':''}
+  <input id="e" type="email" placeholder="E-mail"><input id="p" type="password" placeholder="Senha (mín. 6 caracteres)">
+  <button class="btn" style="width:100%;margin-top:8px" id="go">${reg?'Começar grátis':'Entrar'}</button>
+  <p class="mut" style="text-align:center;margin-top:14px;cursor:pointer" id="sw">${reg?'Já tenho conta':'Criar conta'}</p></div></div>`;
+  $('#sw').onclick=()=>authView(reg?'login':'register');
+  $('#go').onclick=async()=>{
+    const d=await api(reg?'auth/register':'auth/login',{name:reg&&$('#n').value,role:reg&&$('#r').value,email:$('#e').value,password:$('#p').value});
+    localStorage.setItem('pe_token',d.token);localStorage.setItem('pe_user',JSON.stringify(d.user));user=d.user;tab='';boot();
+  };
+}
+
+function shell(tabs,content){
+  app.innerHTML=`<header>${logo}<div class="row" style="flex:none"><span class="mut">${esc(user.name)}</span><button class="btn ghost sm" id="out">Sair</button></div></header>
+  <nav>${tabs.map(([k,l])=>`<button data-t="${k}" class="${tab===k?'on':''}">${l}</button>`).join('')}</nav><main>${content}</main>`;
+  $('#out').onclick=logout;
+  document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;boot()});
+}
+const hour=()=>{const h=new Date().getHours();return h<12?'Bom dia':h<18?'Boa tarde':'Boa noite'};
+
+// ---------- PROFISSIONAL ----------
+const TT=[['dash','Dashboard'],['alunos','Alunos'],['treino','Novo treino']];
+async function trainer(){
+  tab=tab||'dash';
+  if(tab==='dash'){
+    const d=await api('dashboard');
+    shell(TT,`<h2>${hour()}, ${esc(user.name.split(' ')[0])} 👋</h2><br>
+    <div class="grid"><div class="card"><div class="mut">Alunos ativos</div><div class="big">${d.active}</div></div>
+    <div class="card"><div class="mut">Treinos (7 dias)</div><div class="big">${d.week}</div></div></div>
+    <div class="card"><h3>Alunos que precisam de atenção</h3><br>${d.attention.length?d.attention.map(a=>
+      `<p><span class="dot" style="background:var(--red)"></span>${esc(a.name)} — ${a.days===null?'ainda não treinou':a.days+' dias sem treinar'}</p>`).join(''):'<p class="mut">Tudo em dia. 🟢</p>'}</div>
+    <button class="btn" id="add">+ Novo aluno</button>`);
+    $('#add').onclick=()=>{tab='alunos';boot()};
+  }
+  if(tab==='alunos'){
+    const list=await api('students');
+    shell(TT,`<h2>Meus alunos</h2><br><div class="card"><div class="row"><input id="sn" placeholder="Nome"><input id="se" type="email" placeholder="E-mail">
+    <select id="sg"><option>hipertrofia</option><option>emagrecimento</option><option>força</option><option>condicionamento</option><option>manutenção</option></select>
+    <button class="btn" id="sa" style="flex:none">+ Novo aluno</button></div></div>
+    <input id="q" placeholder="Pesquisar por nome...">
+    <div id="ls">${list.length?'':'<div class="card mut">Nenhum aluno ainda. Cadastre o primeiro acima.</div>'}</div>`);
+    const draw=()=>{const f=$('#q').value.toLowerCase();$('#ls').innerHTML=list.filter(s=>s.name.toLowerCase().includes(f)).map(s=>`<div class="card"><b>${esc(s.name)}</b>
+      <span class="mut"> · ${esc(s.goal)}</span><div class="mut">Último treino: ${s.last_workout?new Date(s.last_workout).toLocaleDateString('pt-BR'):'—'} · ${s.sessions_30d} treinos em 30 dias</div>
+      <div class="bar" style="margin-top:8px"><i style="width:${Math.min(100,s.sessions_30d/12*100)}%"></i></div></div>`).join('')};
+    $('#q').oninput=draw;draw();
+    $('#sa').onclick=async()=>{const d=await api('students',{name:$('#sn').value,email:$('#se').value,goal:$('#sg').value});
+      alert('Aluno criado!\nE-mail: '+$('#se').value+'\nSenha provisória: '+d.tempPassword);toast('Aluno cadastrado');boot()};
+  }
+  if(tab==='treino'){
+    const [alunos,ex]=await Promise.all([api('students'),api('exercises')]);
+    shell(TT,`<h2>Novo treino</h2><br><div class="card"><select id="ws">${alunos.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')||'<option value="">Cadastre um aluno primeiro</option>'}</select>
+    <input id="wn" placeholder="Nome do treino (ex.: Treino A — Peito)"></div>
+    ${ex.map(e=>`<div class="card"><div class="row"><label style="flex:2"><input type="checkbox" class="ck" value="${e.id}" style="width:auto;margin-right:8px">${esc(e.name)} <span class="mut">${esc(e.muscle_group)}</span></label>
+    <input class="s" type="number" value="3" title="séries"><input class="r" type="number" value="10" title="reps"><input class="l" type="number" value="0" title="carga kg"></div></div>`).join('')}
+    <p class="mut">Cada exercício: séries · repetições · carga (kg)</p><br><button class="btn" id="pub">Publicar treino</button>`);
+    $('#pub').onclick=async()=>{
+      const exs=[...document.querySelectorAll('.ck')].map((c,i)=>c.checked&&{exercise_id:+c.value,sets:document.querySelectorAll('.s')[i].value,reps:document.querySelectorAll('.r')[i].value,load_kg:document.querySelectorAll('.l')[i].value}).filter(Boolean);
+      await api('workouts',{student_id:+$('#ws').value,name:$('#wn').value,exercises:exs});toast('Treino publicado!');tab='alunos';boot()};
+  }
+}
+
+// ---------- ALUNO ----------
+const ST=[['home','Início'],['wk','Treino'],['evo','Evolução']];
+async function student(){
+  tab=tab||'home';
+  if(tab==='home'){
+    const s=await api('summary'.replace(/^/,'me/')), pct=Math.min(100,s.ml/2500*100);
+    shell(ST,`<h2>Olá, ${esc(user.name.split(' ')[0])} 👋</h2><br>
+    <div class="grid"><div class="card"><div class="mut">Treinos concluídos</div><div class="big">${s.sessions}</div></div>
+    <div class="card"><div class="mut">Peso atual</div><div class="big">${s.weights.length?s.weights.at(-1).weight+' kg':'—'}</div></div></div>
+    <div class="card"><h3>💧 Água hoje: ${(s.ml/1000).toFixed(2).replace('.',',')}L / 2,5L</h3><div class="bar" style="margin:10px 0"><i style="width:${pct}%"></i></div>
+    <div class="row">${[250,500,750,1000].map(m=>`<button class="btn ghost sm w" data-m="${m}">+${m>=1000?'1L':m+'ml'}</button>`).join('')}</div></div>`);
+    document.querySelectorAll('.w').forEach(b=>b.onclick=async()=>{await api('me/water',{ml:+b.dataset.m});boot()});
+  }
+  if(tab==='wk'){
+    const ws=await api('me/workouts');
+    shell(ST,`<h2>Treino de hoje</h2><br>${ws.length?'':'<div class="card mut">Seu profissional ainda não publicou um treino para você.</div>'}
+    ${ws.map(w=>`<div class="card"><h3>${esc(w.name)}</h3><div class="mut" id="p${w.id}">0/${w.exercises.reduce((a,e)=>a+e.sets,0)} séries</div><br>
+    ${w.exercises.map(e=>`<div class="card" style="background:#0f1011"><b>${esc(e.name)}</b><div class="mut">${e.sets}×${e.reps} · ${e.load_kg}kg · descanso ${e.rest_s}s</div>
+    <div class="row" style="margin-top:8px">${Array.from({length:e.sets},(_,i)=>`<button class="btn ghost sm set" data-w="${w.id}" data-e="${e.exercise_id}" data-n="${i+1}" data-r="${e.reps}" data-l="${e.load_kg}">Série ${i+1}</button>`).join('')}</div></div>`).join('')}
+    <button class="btn fin" data-w="${w.id}" style="width:100%">Finalizar treino</button></div>`).join('')}`);
+    const done={};
+    document.querySelectorAll('.set').forEach(b=>b.onclick=()=>{const w=b.dataset.w;done[w]=done[w]||{};const k=b.dataset.e+'-'+b.dataset.n;
+      if(done[w][k]){delete done[w][k];b.classList.remove('done')}else{done[w][k]={exercise_id:+b.dataset.e,set_no:+b.dataset.n,reps:+b.dataset.r,load_kg:+b.dataset.l};b.classList.add('done')}
+      const t=ws.find(x=>x.id==w).exercises.reduce((a,e)=>a+e.sets,0);$('#p'+w).textContent=Object.keys(done[w]).length+'/'+t+' séries'});
+    document.querySelectorAll('.fin').forEach(b=>b.onclick=async()=>{
+      const r=await api('me/sessions',{workout_id:+b.dataset.w,sets:Object.values(done[b.dataset.w]||{})});
+      alert('🎉 Treino concluído!\nVolume: '+r.volume+' kg'+(r.previous!==null?'\nTreino anterior: '+r.previous+' kg':''));boot()});
+  }
+  if(tab==='evo'){
+    const s=await api('me/summary'),mx=Math.max(...s.weights.map(w=>+w.weight),1);
+    shell(ST,`<h2>Minha evolução</h2><br><div class="card"><div class="row"><input id="pw" type="number" step="0.1" placeholder="Peso de hoje (kg)"><button class="btn" id="sv" style="flex:none">Registrar</button></div></div>
+    <div class="card"><h3>Peso</h3>${s.weights.length?`<div class="chart">${s.weights.map(w=>`<i style="height:${w.weight/mx*100}%" title="${w.weight}kg"></i>`).join('')}</div>`:'<p class="mut">Registre seu peso para ver o gráfico.</p>'}</div>`);
+    $('#sv').onclick=async()=>{await api('me/measurements',{weight:$('#pw').value});toast('Peso registrado');boot()};
+  }
+}
+
+function boot(){ if(!user)return authView(); (user.role==='trainer'?trainer:student)().catch(()=>{}); }
+boot();
+</script>
+</body>
+</html>
