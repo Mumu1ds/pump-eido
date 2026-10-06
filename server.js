@@ -147,14 +147,28 @@ app.post('/api/me/measurements', S, h(async (req, res) => {
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const SYS = 'Você organiza planos de treino e alimentação para adultos saudáveis, em português do Brasil. Não faz diagnóstico nem trata doenças. Havendo lesão, condição de saúde ou restrição, escolha opções conservadoras e recomende procurar um profissional. Responda SOMENTE com JSON válido, sem texto fora do JSON.';
 async function askAI(user) {
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model: MODEL, max_tokens: 3500, system: SYS, messages: [{ role: 'user', content: user }] })
-  });
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.error?.message || 'falha na IA');
-  const t = d.content.map(c => c.text || '').join('');
+  let t;
+  if (process.env.GEMINI_API_KEY) { // IA gratuita (Google AI Studio)
+    const m = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: SYS }] }, contents: [{ role: 'user', parts: [{ text: user }] }],
+        generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 3500 } })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error?.message || 'falha na IA');
+    t = (d.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+  } else { // Claude (pago)
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: MODEL, max_tokens: 3500, system: SYS, messages: [{ role: 'user', content: user }] })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error?.message || 'falha na IA');
+    t = d.content.map(c => c.text || '').join('');
+  }
   return JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1));
 }
 
@@ -207,7 +221,7 @@ app.get('/api/me/ai', S, h(async (req, res) => {
 }));
 
 app.post('/api/me/ai/plan', S, h(async (req, res) => {
-  if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ error: 'A IA ainda não foi configurada no servidor.' });
+  if (!process.env.GEMINI_API_KEY && !process.env.ANTHROPIC_API_KEY) return res.status(503).json({ error: 'A IA ainda não foi configurada no servidor.' });
   const b = req.body, sid = await studentId(req.user.id), uid = req.user.id;
   const p = { birth_year: +b.birth_year, sex: b.sex === 'F' ? 'F' : 'M', height_cm: +b.height_cm, weight_kg: +b.weight_kg,
     goal: String(b.goal || 'hipertrofia').slice(0, 30), level: String(b.level || 'iniciante').slice(0, 20),
