@@ -153,8 +153,10 @@ async function askAI(user) {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
       method: 'POST',
       headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY, 'content-type': 'application/json' },
-      body: JSON.stringify({ systemInstruction: { parts: [{ text: SYS }] }, contents: [{ role: 'user', parts: [{ text: user }] }],
-        generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 3500 } })
+      body: JSON.stringify(/^gemma/.test(m) // Gemma não aceita instrução de sistema nem modo JSON
+        ? { contents: [{ role: 'user', parts: [{ text: SYS + '\n\n' + user }] }], generationConfig: { maxOutputTokens: 8192 } }
+        : { systemInstruction: { parts: [{ text: SYS }] }, contents: [{ role: 'user', parts: [{ text: user }] }],
+            generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8192 } })
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error?.message || 'falha na IA');
@@ -243,4 +245,4 @@ app.post('/api/me/ai/plan', S, h(async (req, res) => {
 }));
 
 if (require.main === module) app.listen(process.env.PORT || 3000, () => console.log('Pump Eido em http://localhost:3000'));
-module.exports = app;
+module.exports = app; // a Vercel usa este export
