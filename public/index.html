@@ -57,13 +57,13 @@ function authView(mode='login'){
   const reg=mode==='register';
   app.innerHTML=`<div class="login"><div style="text-align:center;font-size:28px;margin-bottom:6px">${logo}</div>
   <p class="mut" style="text-align:center;margin-bottom:20px">${sessionStorage.getItem('pe_plan')?'Plano escolhido: <b style="color:var(--lime)">'+sessionStorage.getItem('pe_plan')+'</b>':'Treino. Dieta. Evolução. Tudo em um só lugar.'}</p>
-  <div class="card">${reg?'<input id="n" placeholder="Seu nome"><select id="r"><option value="trainer">Sou profissional</option><option value="student">Sou aluno (plano com IA)</option></select>':''}
+  <div class="card">${reg?'<input id="n" placeholder="Seu nome">':''}
   <input id="e" type="email" placeholder="E-mail"><input id="p" type="password" placeholder="Senha (mín. 6 caracteres)">
   <button class="btn" style="width:100%;margin-top:8px" id="go">${reg?'Começar grátis':'Entrar'}</button>
   <p class="mut" style="text-align:center;margin-top:14px;cursor:pointer" id="sw">${reg?'Já tenho conta':'Criar conta'}</p><p class="mut" style="text-align:center;margin-top:8px;cursor:pointer" id="bk">← Voltar</p></div></div>`;
   $('#sw').onclick=()=>authView(reg?'login':'register');$('#bk').onclick=landing;
   $('#go').onclick=async()=>{
-    const d=await api(reg?'auth/register':'auth/login',{name:reg&&$('#n').value,role:reg&&$('#r').value,email:$('#e').value,password:$('#p').value});
+    const d=await api(reg?'auth/register':'auth/login',{name:reg&&$('#n').value,email:$('#e').value,password:$('#p').value});
     localStorage.setItem('pe_token',d.token);localStorage.setItem('pe_user',JSON.stringify(d.user));user=d.user;tab='';afterAuth();
   };
 }
@@ -187,7 +187,7 @@ async function plano(){
   document.querySelectorAll('.rg').forEach(b=>b.onclick=()=>gerar(b.dataset.k,$('#fb').value,{...p,ack:true},b));
 }
 
-const PLANS=[['FREE','R$ 0',['Até 3 alunos','Treinos','Evolução básica']],['PRO','R$ 49',['Até 30 alunos','Treinos e dieta','Metas e evolução','Mensagens e relatórios'],1],['PREMIUM','R$ 99',['Alunos ilimitados','Relatórios e métricas','Automações','Recursos de IA']]];
+const PLANS=[['FREE','R$ 0',['2 gerações de IA por dia','Treino e dieta personalizados','Registro de peso e água']],['PRO','R$ 49',['10 gerações de IA por dia','Treino e dieta personalizados','Ajustes ilimitados por pedido','Acompanhamento de evolução'],1],['PREMIUM','R$ 99',['30 gerações de IA por dia','Tudo do plano PRO','Acesso antecipado a novidades']]];
 const pricing=cur=>`<div class="grid">${PLANS.map(([n,pr,f,hot])=>`<div class="card" style="text-align:left;${hot?'border-color:var(--lime)':''}">${hot?'<span class="tag">MAIS POPULAR</span>':''}<h3>${n}</h3><p class="big">${pr}<span class="mut">/mês</span></p>${f.map(x=>`<p class="mut">✓ ${x}</p>`).join('')}<br><button class="btn ${hot?'':'ghost'} pl" data-p="${n}" style="width:100%" ${cur===n?'disabled':''}>${cur===n?'Plano atual':n==='FREE'?'Começar grátis':'Adquirir '+n}</button></div>`).join('')}</div>`;
 const bindPl=()=>document.querySelectorAll('.pl').forEach(b=>b.onclick=()=>escolher(b.dataset.p));
 function escolher(p){ if(user)return ativar(p); sessionStorage.setItem('pe_plan',p); authView('register'); }
@@ -215,16 +215,16 @@ async function ativar(p){
   user.plan=p;localStorage.setItem('pe_user',JSON.stringify(user));welcome(p);
 }
 function welcome(p){
-  const b={FREE:['Até 3 alunos','Treinos e evolução básica'],PRO:['Até 30 alunos','Treinos, dieta e metas','Mensagens e relatórios'],PREMIUM:['Alunos ilimitados','Relatórios e métricas','Recursos de IA avançados']}[p];
+  const b={FREE:['2 gerações de IA por dia','Treino e dieta personalizados'],PRO:['10 gerações de IA por dia','Ajustes por pedido','Acompanhamento de evolução'],PREMIUM:['30 gerações de IA por dia','Tudo do plano PRO','Acesso antecipado a novidades']}[p];
   app.innerHTML=`<div class="login" style="text-align:center"><div style="font-size:28px">${logo}</div><br><div class="card"><div style="font-size:46px">🎉</div><h2>Plano ${p} ativo!</h2><br>${b.map(x=>`<p class="mut">✓ ${x}</p>`).join('')}<br><button class="btn" id="go" style="width:100%">Começar agora</button><p class="mut" style="margin-top:12px">Demonstração: nenhuma cobrança foi feita.</p></div></div>`;
   $('#go').onclick=()=>{tab='';boot()};
 }
 function planosView(){
-  shell(user.role==='trainer'?TT:ST,`<h2>Meu plano</h2><p class="mut">Plano atual: <b>${user.plan||'FREE'}</b> · demonstração, sem cobrança.</p><br>${pricing(user.plan||'FREE')}`);
+  shell(ST,`<h2>Meu plano</h2><p class="mut">Plano atual: <b>${user.plan||'FREE'}</b> · demonstração, sem cobrança.</p><br>${pricing(user.plan||'FREE')}`);
   bindPl();
 }
 
-function boot(){ if(!user)return landing(); (user.role==='trainer'?trainer:student)().catch(()=>{}); }
+function boot(){ if(!user)return landing(); student().catch(()=>{}); }
 boot();
 </script>
 </body>
