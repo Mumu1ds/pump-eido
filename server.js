@@ -102,7 +102,7 @@ const S = auth('student');
 
 app.get('/api/me/workouts', S, h(async (req, res) => {
   const sid = await studentId(req.user.id);
-  const ws = await q('SELECT id, name FROM workouts WHERE student_id=? ORDER BY id DESC', [sid]);
+  const ws = await q('SELECT id, name FROM workouts WHERE student_id=? AND archived=0 ORDER BY id DESC', [sid]);
   for (const w of ws) w.exercises = await q(`SELECT we.exercise_id, e.name, e.muscle_group, we.sets, we.reps, we.load_kg, we.rest_s
     FROM workout_exercises we JOIN exercises e ON e.id=we.exercise_id WHERE we.workout_id=? ORDER BY we.position`, [w.id]);
   res.json(ws);
@@ -141,6 +141,91 @@ app.post('/api/me/measurements', S, h(async (req, res) => {
   if (!(w > 20 && w < 400)) return res.status(400).json({ error: 'Informe um peso válido.' });
   await q('INSERT INTO measurements (student_id,weight,day) VALUES (?,?,CURDATE())', [await studentId(req.user.id), w]);
   res.json({ ok: true });
+}));
+
+// ---------- IA: treino e dieta automáticos ----------
+const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
+const SYS = 'Você organiza planos de treino e alimentação para adultos saudáveis, em português do Brasil. Não faz diagnóstico nem trata doenças. Havendo lesão, condição de saúde ou restrição, escolha opções conservadoras e recomende procurar um profissional. Responda SOMENTE com JSON válido, sem texto fora do JSON.';
+async function askAI(user) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: MODEL, max_tokens: 3500, system: SYS, messages: [{ role: 'user', content: user }] })
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error?.message || 'falha na IA');
+  const t = d.content.map(c => c.text || '').join('');
+  return JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1));
+}
+
+async function genWorkout(sid, uid, p, fb) {
+  const exs = await q('SELECT id,name,muscle_group,equipment FROM exercises');
+  const out = await askAI(`Perfil: ${JSON.stringify(p)}
+Exercícios disponíveis (use SOMENTE estes exercise_id): ${JSON.stringify(exs)}
+Crie ${p.days} treinos (um por dia de treino), de 5 a 8 exercícios cada, adequados ao nível, objetivo e equipamento (${p.equipment}). Use load_kg 0 (o usuário ajusta a carga).
+Pedido do usuário: ${fb || 'nenhum'}
+Formato: {"workouts":[{"name":"Treino A — Peito e Tríceps","exercises":[{"exercise_id":1,"sets":4,"reps":10,"rest_s":90}]}]}`);
+  const ids = new Set(exs.map(e => e.id));
+  const ws = (out.workouts || []).slice(0, 6).map(w => ({ name: String(w.name || 'Treino').slice(0, 100),
+    ex: (w.exercises || []).filter(e => ids.has(+e.exercise_id)).slice(0, 10) })).filter(w => w.ex.length);
+  if (!ws.length) throw new Error('treino inválido');
+  await q('UPDATE workouts SET archived=1 WHERE student_id=? AND trainer_id=?', [sid, uid]); // mantém o histórico
+  for (const w of ws) {
+    const r = await q('INSERT INTO workouts (trainer_id,student_id,name) VALUES (?,?,?)', [uid, sid, w.name]);
+    for (const [i, e] of w.ex.entries())
+      await q('INSERT INTO workout_exercises (workout_id,exercise_id,position,sets,reps,load_kg,rest_s) VALUES (?,?,?,?,?,0,?)',
+        [r.insertId, e.exercise_id, i, Math.min(6, Math.max(1, +e.sets || 3)), Math.min(30, Math.max(1, +e.reps || 10)), Math.min(300, +e.rest_s || 60)]);
+  }
+  await q('INSERT INTO ai_plans (student_id,kind,feedback) VALUES (?,"treino",?)', [sid, fb || null]);
+}
+
+async function genDiet(sid, p, fb) {
+  const age = new Date().getFullYear() - p.birth_year;
+  const bmr = 10 * p.weight_kg + 6.25 * p.height_cm - 5 * age + (p.sex === 'M' ? 5 : -161); // Mifflin-St Jeor
+  const adj = { emagrecimento: 0.85, hipertrofia: 1.1 }[p.goal] || 1;
+  const kcal = Math.round(Math.max(p.sex === 'M' ? 1500 : 1200, bmr * (1.2 + 0.07 * p.days) * adj) / 10) * 10; // piso de segurança
+  const protein = Math.round(p.weight_kg * (p.goal === 'hipertrofia' ? 2 : 1.8)), fat = Math.round(p.weight_kg * 0.9);
+  const carbs = Math.max(50, Math.round((kcal - protein * 4 - fat * 9) / 4));
+  const out = await askAI(`Perfil: ${JSON.stringify(p)}
+Meta diária já calculada pelo sistema: ${kcal} kcal, ${protein}g proteína, ${carbs}g carboidratos, ${fat}g gorduras.
+Monte um dia de alimentação com 5 refeições cuja soma fique próxima da meta, com alimentos comuns no Brasil. Respeite rigorosamente as restrições e preferências.
+Pedido do usuário: ${fb || 'nenhum'}
+Formato: {"meals":[{"name":"Café da manhã","foods":[{"food":"Ovos mexidos","qty":"3 unidades","kcal":210}]}],"notes":"observação curta"}`);
+  const meals = (out.meals || []).slice(0, 8).map(m => ({ name: String(m.name || 'Refeição').slice(0, 40),
+    foods: (m.foods || []).slice(0, 10).map(f => ({ food: String(f.food || '').slice(0, 60), qty: String(f.qty || '').slice(0, 30), kcal: Math.round(+f.kcal) || 0 })) })).filter(m => m.foods.length);
+  if (!meals.length) throw new Error('dieta inválida');
+  await q('INSERT INTO ai_plans (student_id,kind,feedback,content) VALUES (?,"dieta",?,?)',
+    [sid, fb || null, JSON.stringify({ kcal, protein, carbs, fat, meals, notes: String(out.notes || '').slice(0, 300) })]);
+}
+
+app.get('/api/me/ai', S, h(async (req, res) => {
+  const sid = await studentId(req.user.id);
+  const [profile] = await q('SELECT * FROM ai_profiles WHERE student_id=?', [sid]);
+  const [d] = await q('SELECT content FROM ai_plans WHERE student_id=? AND kind="dieta" ORDER BY id DESC LIMIT 1', [sid]);
+  const ws = await q('SELECT name FROM workouts WHERE student_id=? AND archived=0 ORDER BY id', [sid]);
+  res.json({ profile: profile || null, diet: d ? JSON.parse(d.content) : null, workouts: ws.map(w => w.name) });
+}));
+
+app.post('/api/me/ai/plan', S, h(async (req, res) => {
+  if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ error: 'A IA ainda não foi configurada no servidor.' });
+  const b = req.body, sid = await studentId(req.user.id), uid = req.user.id;
+  const p = { birth_year: +b.birth_year, sex: b.sex === 'F' ? 'F' : 'M', height_cm: +b.height_cm, weight_kg: +b.weight_kg,
+    goal: String(b.goal || 'hipertrofia').slice(0, 30), level: String(b.level || 'iniciante').slice(0, 20),
+    days: Math.min(6, Math.max(2, +b.days || 3)), equipment: String(b.equipment || 'academia').slice(0, 20),
+    preferences: String(b.preferences || '').slice(0, 500), restrictions: String(b.restrictions || '').slice(0, 500) };
+  const age = new Date().getFullYear() - p.birth_year;
+  if (!b.ack) return res.status(400).json({ error: 'Aceite o termo para continuar.' });
+  if (!(age >= 18 && age <= 90)) return res.status(400).json({ error: 'Os planos automáticos são só para maiores de 18 anos. Procure um profissional.' });
+  if (!(p.height_cm > 120 && p.height_cm < 230 && p.weight_kg > 30 && p.weight_kg < 300)) return res.status(400).json({ error: 'Confira altura e peso.' });
+  const [{ n }] = await q('SELECT COUNT(*) n FROM ai_plans WHERE student_id=? AND created_at > NOW() - INTERVAL 1 DAY', [sid]);
+  if (n >= 6) return res.status(429).json({ error: 'Limite diário de gerações atingido. Tente amanhã.' });
+  await q('REPLACE INTO ai_profiles (student_id,birth_year,sex,height_cm,weight_kg,goal,level,days,equipment,preferences,restrictions) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    [sid, p.birth_year, p.sex, p.height_cm, p.weight_kg, p.goal, p.level, p.days, p.equipment, p.preferences, p.restrictions]);
+  const fb = String(b.feedback || '').slice(0, 400), jobs = [];
+  if (b.kind !== 'dieta') jobs.push(genWorkout(sid, uid, p, fb));
+  if (b.kind !== 'treino') jobs.push(genDiet(sid, p, fb));
+  try { await Promise.all(jobs); res.json({ ok: true }); }
+  catch (e) { console.error(e); res.status(502).json({ error: 'A IA não conseguiu gerar agora (' + String(e.message).slice(0, 100) + '). Tente de novo.' }); }
 }));
 
 if (require.main === module) app.listen(process.env.PORT || 3000, () => console.log('Pump Eido em http://localhost:3000'));
