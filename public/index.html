@@ -55,7 +55,7 @@ function authView(mode='login'){
   const reg=mode==='register';
   app.innerHTML=`<div class="login"><div style="text-align:center;font-size:28px;margin-bottom:6px">${logo}</div>
   <p class="mut" style="text-align:center;margin-bottom:20px">Treino. Dieta. Evolução. Tudo em um só lugar.</p>
-  <div class="card">${reg?'<input id="n" placeholder="Seu nome"><select id="r"><option value="trainer">Sou profissional</option><option value="student">Sou aluno</option></select>':''}
+  <div class="card">${reg?'<input id="n" placeholder="Seu nome"><select id="r"><option value="trainer">Sou profissional</option><option value="student">Sou aluno (plano com IA)</option></select>':''}
   <input id="e" type="email" placeholder="E-mail"><input id="p" type="password" placeholder="Senha (mín. 6 caracteres)">
   <button class="btn" style="width:100%;margin-top:8px" id="go">${reg?'Começar grátis':'Entrar'}</button>
   <p class="mut" style="text-align:center;margin-top:14px;cursor:pointer" id="sw">${reg?'Já tenho conta':'Criar conta'}</p></div></div>`;
@@ -116,9 +116,9 @@ async function trainer(){
 }
 
 // ---------- ALUNO ----------
-const ST=[['home','Início'],['wk','Treino'],['evo','Evolução']];
+const ST=[['plano','Plano IA'],['home','Início'],['wk','Treino'],['evo','Evolução']];
 async function student(){
-  tab=tab||'home';
+  tab=tab||'plano'; if(tab==='plano')return plano();
   if(tab==='home'){
     const s=await api('summary'.replace(/^/,'me/')), pct=Math.min(100,s.ml/2500*100);
     shell(ST,`<h2>Olá, ${esc(user.name.split(' ')[0])} 👋</h2><br>
@@ -149,6 +149,40 @@ async function student(){
     <div class="card"><h3>Peso</h3>${s.weights.length?`<div class="chart">${s.weights.map(w=>`<i style="height:${w.weight/mx*100}%" title="${w.weight}kg"></i>`).join('')}</div>`:'<p class="mut">Registre seu peso para ver o gráfico.</p>'}</div>`);
     $('#sv').onclick=async()=>{await api('me/measurements',{weight:$('#pw').value});toast('Peso registrado');boot()};
   }
+}
+
+
+async function gerar(kind,fb,p,btn){
+  btn.disabled=true;const t=btn.textContent;btn.textContent='Gerando... pode levar até 30s';
+  try{await api('me/ai/plan',{...p,kind,feedback:fb});window._edit=false;toast('Plano pronto!');boot()}
+  catch{btn.disabled=false;btn.textContent=t}
+}
+async function plano(){
+  const d=await api('me/ai'),p=d.profile,c=d.diet,edit=!p||window._edit;
+  const v=(k,x='')=>esc(p?.[k]??x),sel=(k,o,x)=>o.map(([a,b])=>`<option value="${a}" ${(p?.[k]??x)==a?'selected':''}>${b}</option>`).join('');
+  const warn='<p class="mut">⚠️ Plano gerado por IA como orientação geral. Não substitui médico, nutricionista ou educador físico. Em caso de lesão, doença ou dúvida, procure um profissional.</p>';
+  if(edit){
+    shell(ST,`<h2>Seu plano com IA</h2><p class="mut">Responda abaixo e a IA monta seu treino e sua dieta.</p><br><div class="card">
+    <div class="row"><input id="by" type="number" placeholder="Ano de nascimento" value="${v('birth_year')}"><select id="sx">${sel('sex',[['M','Masculino'],['F','Feminino']],'M')}</select></div>
+    <div class="row"><input id="ht" type="number" placeholder="Altura (cm)" value="${v('height_cm')}"><input id="wt" type="number" step="0.1" placeholder="Peso (kg)" value="${v('weight_kg')}"></div>
+    <select id="gl">${sel('goal',[['hipertrofia','Hipertrofia'],['emagrecimento','Emagrecimento'],['força','Força'],['condicionamento','Condicionamento'],['manutenção','Manutenção']],'hipertrofia')}</select>
+    <div class="row"><select id="lv">${sel('level',[['iniciante','Iniciante'],['intermediário','Intermediário'],['avançado','Avançado']],'iniciante')}</select>
+    <select id="dy">${sel('days',[[2,'2 dias/sem'],[3,'3 dias/sem'],[4,'4 dias/sem'],[5,'5 dias/sem'],[6,'6 dias/sem']],3)}</select>
+    <select id="eq">${sel('equipment',[['academia','Academia'],['casa','Em casa'],['halteres','Só halteres']],'academia')}</select></div>
+    <input id="pf" placeholder="Preferências (alimentos que gosta, tipo de treino...)" value="${v('preferences')}">
+    <input id="rs" placeholder="Restrições (alergias, lesões, alimentos que evita)" value="${v('restrictions')}">
+    <label class="mut"><input type="checkbox" id="ak" style="width:auto;margin-right:8px">Tenho 18 anos ou mais, estou apto(a) a praticar exercícios e entendo que o plano é uma orientação geral gerada por IA, que não substitui médico, nutricionista ou educador físico.</label><br><br>
+    <button class="btn" id="gen" style="width:100%">Gerar meu plano</button></div>`);
+    $('#gen').onclick=e=>gerar('ambos','',{birth_year:+$('#by').value,sex:$('#sx').value,height_cm:+$('#ht').value,weight_kg:+$('#wt').value,goal:$('#gl').value,level:$('#lv').value,days:+$('#dy').value,equipment:$('#eq').value,preferences:$('#pf').value,restrictions:$('#rs').value,ack:$('#ak').checked},e.target);
+    return;
+  }
+  shell(ST,`<h2>Meu plano</h2><br><div class="card"><h3>🥗 Dieta</h3>${c?`<p class="big">${c.kcal} kcal</p><p class="mut">Proteína ${c.protein}g · Carboidratos ${c.carbs}g · Gorduras ${c.fat}g</p><br>${c.meals.map(m=>`<div class="card" style="background:#0f1011"><b>${esc(m.name)}</b>${m.foods.map(f=>`<div class="mut">${esc(f.food)} — ${esc(f.qty)} · ${f.kcal} kcal</div>`).join('')}</div>`).join('')}<p class="mut">${esc(c.notes)}</p>`:'<p class="mut">Sem dieta ainda.</p>'}</div>
+  <div class="card"><h3>🏋️ Treinos</h3><p class="mut">${d.workouts.map(esc).join(' · ')||'Sem treino ainda.'}</p><br><button class="btn ghost sm" id="vt">Abrir treinos</button></div>
+  <div class="card"><h3>Ajustar com a IA</h3><input id="fb" placeholder="Ex.: troque o frango por peixe; quero treinos mais curtos"><div class="row">
+  <button class="btn sm rg" data-k="treino">Regenerar treino</button><button class="btn sm rg" data-k="dieta">Regenerar dieta</button><button class="btn sm rg" data-k="ambos">Regenerar ambos</button></div></div>
+  <button class="btn ghost" id="ed">Editar meus dados</button><br><br>${warn}`);
+  $('#vt').onclick=()=>{tab='wk';boot()};$('#ed').onclick=()=>{window._edit=true;boot()};
+  document.querySelectorAll('.rg').forEach(b=>b.onclick=()=>gerar(b.dataset.k,$('#fb').value,{...p,ack:true},b));
 }
 
 function boot(){ if(!user)return authView(); (user.role==='trainer'?trainer:student)().catch(()=>{}); }
