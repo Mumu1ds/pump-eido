@@ -29,8 +29,8 @@ const token = u => jwt.sign({ id: u.id, role: u.role, name: u.name }, SECRET, { 
 
 // ---------- Autenticação ----------
 app.post('/api/auth/register', h(async (req, res) => {
-  const { name, email, password, role } = req.body;
-  if (!name || !/^\S+@\S+\.\S+$/.test(email || '') || (password || '').length < 6 || !['trainer', 'student'].includes(role))
+  const { name, email, password } = req.body, role = 'student'; // todo usuário é uma pessoa com plano de treino/dieta por IA
+  if (!name || !/^\S+@\S+\.\S+$/.test(email || '') || (password || '').length < 6)
     return res.status(400).json({ error: 'Preencha nome, e-mail válido e senha (mín. 6 caracteres).' });
   if ((await q('SELECT id FROM users WHERE email=?', [email])).length) return res.status(409).json({ error: 'E-mail já cadastrado.' });
   const r = await q('INSERT INTO users (name,email,password_hash,role) VALUES (?,?,?,?)', [name, email, await bcrypt.hash(password, 10), role]);
@@ -43,6 +43,10 @@ app.post('/api/auth/login', h(async (req, res) => {
   const [u] = await q('SELECT * FROM users WHERE email=?', [req.body.email || '']);
   if (!u || !(await bcrypt.compare(req.body.password || '', u.password_hash)))
     return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
+  if (u.role !== 'student') { // contas antigas de profissional viram contas normais
+    await q("UPDATE users SET role='student' WHERE id=?", [u.id]); u.role = 'student';
+    if (!(await studentId(u.id))) await q('INSERT INTO students (user_id) VALUES (?)', [u.id]);
+  }
   res.json({ token: token(u), user: { id: u.id, role: u.role, name: u.name, plan: (await q('SELECT name FROM plans WHERE id=?', [u.plan_id]))[0].name } });
 }));
 
@@ -249,7 +253,9 @@ app.post('/api/me/ai/plan', S, h(async (req, res) => {
   if (!(age >= 18 && age <= 90)) return res.status(400).json({ error: 'Os planos automáticos são só para maiores de 18 anos. Procure um profissional.' });
   if (!(p.height_cm > 120 && p.height_cm < 230 && p.weight_kg > 30 && p.weight_kg < 300)) return res.status(400).json({ error: 'Confira altura e peso.' });
   const [{ n }] = await q('SELECT COUNT(*) n FROM ai_plans WHERE student_id=? AND created_at > NOW() - INTERVAL 1 DAY', [sid]);
-  if (n >= 6) return res.status(429).json({ error: 'Limite diário de gerações atingido. Tente amanhã.' });
+  const [{ pn }] = await q('SELECT p.name pn FROM users u JOIN plans p ON p.id=u.plan_id WHERE u.id=?', [uid]);
+  const cap = { FREE: 2, PRO: 10, PREMIUM: 30 }[pn] || 2; // gerações de IA por dia, conforme o plano
+  if (n + (b.kind === 'ambos' ? 2 : 1) > cap) return res.status(429).json({ error: `Limite diário do plano ${pn} atingido (${cap} gerações). Faça upgrade ou tente amanhã.` });
   await q('REPLACE INTO ai_profiles (student_id,birth_year,sex,height_cm,weight_kg,goal,level,days,equipment,preferences,restrictions) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
     [sid, p.birth_year, p.sex, p.height_cm, p.weight_kg, p.goal, p.level, p.days, p.equipment, p.preferences, p.restrictions]);
   const fb = String(b.feedback || '').slice(0, 400), jobs = [];
