@@ -146,21 +146,36 @@ app.post('/api/me/measurements', S, h(async (req, res) => {
 // ---------- IA: treino e dieta automáticos ----------
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const SYS = 'Você organiza planos de treino e alimentação para adultos saudáveis, em português do Brasil. Não faz diagnóstico nem trata doenças. Havendo lesão, condição de saúde ou restrição, escolha opções conservadoras e recomende procurar um profissional. Responda SOMENTE com JSON válido, sem texto fora do JSON.';
+const norm = x => x.trim().replace(/^models\//, '').toLowerCase().replace(/\s+/g, '-'); // corrige espaços, maiúsculas e prefixo
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function callGemini(m, user) {
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
+    method: 'POST',
+    headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY, 'content-type': 'application/json' },
+    body: JSON.stringify(/^gemma/.test(m) // Gemma não aceita instrução de sistema nem modo JSON
+      ? { contents: [{ role: 'user', parts: [{ text: SYS + '\n\n' + user }] }], generationConfig: { maxOutputTokens: 8192 } }
+      : { systemInstruction: { parts: [{ text: SYS }] }, contents: [{ role: 'user', parts: [{ text: user }] }],
+          generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8192 } })
+  });
+  const d = await r.json();
+  if (!r.ok) { const e = new Error(d.error?.message || 'falha na IA'); e.status = r.status; throw e; }
+  return (d.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+}
+
 async function askAI(user) {
   let t;
-  if (process.env.GEMINI_API_KEY) { // IA gratuita (Google AI Studio)
-    const m = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
-      method: 'POST',
-      headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY, 'content-type': 'application/json' },
-      body: JSON.stringify(/^gemma/.test(m) // Gemma não aceita instrução de sistema nem modo JSON
-        ? { contents: [{ role: 'user', parts: [{ text: SYS + '\n\n' + user }] }], generationConfig: { maxOutputTokens: 8192 } }
-        : { systemInstruction: { parts: [{ text: SYS }] }, contents: [{ role: 'user', parts: [{ text: user }] }],
-            generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8192 } })
-    });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error?.message || 'falha na IA');
-    t = (d.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+  if (process.env.GEMINI_API_KEY) { // IA gratuita (Google AI Studio), com nova tentativa e modelo reserva
+    const models = [process.env.GEMINI_MODEL || 'gemini-3.8-flash', ...(process.env.GEMINI_FALLBACK || 'gemini-3-flash-preview').split(',')].map(norm).filter(Boolean);
+    let last;
+    for (const m of models) {
+      for (let i = 0; i < 2 && t === undefined; i++) {
+        try { t = await callGemini(m, user); }
+        catch (e) { last = e; if (![429, 500, 503].includes(e.status)) break; await sleep(2000); } // erro temporário: tenta de novo
+      }
+      if (t !== undefined) break;
+    }
+    if (t === undefined) throw last;
   } else { // Claude (pago)
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
