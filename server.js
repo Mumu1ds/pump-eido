@@ -35,7 +35,7 @@ app.post('/api/auth/register', h(async (req, res) => {
   if ((await q('SELECT id FROM users WHERE email=?', [email])).length) return res.status(409).json({ error: 'E-mail já cadastrado.' });
   const r = await q('INSERT INTO users (name,email,password_hash,role) VALUES (?,?,?,?)', [name, email, await bcrypt.hash(password, 10), role]);
   if (role === 'student') await q('INSERT INTO students (user_id) VALUES (?)', [r.insertId]);
-  const u = { id: r.insertId, role, name };
+  const u = { id: r.insertId, role, name, plan: 'FREE' };
   res.json({ token: token(u), user: u });
 }));
 
@@ -43,7 +43,7 @@ app.post('/api/auth/login', h(async (req, res) => {
   const [u] = await q('SELECT * FROM users WHERE email=?', [req.body.email || '']);
   if (!u || !(await bcrypt.compare(req.body.password || '', u.password_hash)))
     return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
-  res.json({ token: token(u), user: { id: u.id, role: u.role, name: u.name } });
+  res.json({ token: token(u), user: { id: u.id, role: u.role, name: u.name, plan: (await q('SELECT name FROM plans WHERE id=?', [u.plan_id]))[0].name } });
 }));
 
 // ---------- Profissional ----------
@@ -257,6 +257,18 @@ app.post('/api/me/ai/plan', S, h(async (req, res) => {
   if (b.kind !== 'treino') jobs.push(genDiet(sid, p, fb));
   try { await Promise.all(jobs); res.json({ ok: true }); }
   catch (e) { console.error(e); res.status(502).json({ error: 'A IA não conseguiu gerar agora (' + String(e.message).slice(0, 100) + '). Tente de novo.' }); }
+}));
+
+// ---------- Assinatura (DEMONSTRAÇÃO: não cobra nada) ----------
+app.post('/api/me/plan', auth(), h(async (req, res) => {
+  const [p] = await q('SELECT id, name, max_students FROM plans WHERE name=?', [String(req.body.plan || '').toUpperCase()]);
+  if (!p) return res.status(400).json({ error: 'Plano inválido.' });
+  if (req.user.role === 'trainer' && p.max_students !== null) {
+    const [{ n }] = await q('SELECT COUNT(*) n FROM students WHERE trainer_id=?', [req.user.id]);
+    if (n > p.max_students) return res.status(400).json({ error: `Você tem ${n} alunos e o plano ${p.name} permite ${p.max_students}.` });
+  }
+  await q('UPDATE users SET plan_id=? WHERE id=?', [p.id, req.user.id]);
+  res.json({ ok: true, plan: p.name, demo: true });
 }));
 
 if (require.main === module) app.listen(process.env.PORT || 3000, () => console.log('Pump Eido em http://localhost:3000'));
