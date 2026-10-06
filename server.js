@@ -77,7 +77,7 @@ app.post('/api/students', T, h(async (req, res) => {
     return res.status(402).json({ error: 'Limite de alunos do seu plano atingido. Faça upgrade.' });
   if ((await q('SELECT id FROM users WHERE email=?', [email])).length) return res.status(409).json({ error: 'E-mail já cadastrado.' });
   const temp = crypto.randomBytes(4).toString('hex');
-  const r = await q('INSERT INTO users (name,email,password_hash,role) VALUES (?,?,?,"student")', [name, email, await bcrypt.hash(temp, 10)]);
+  const r = await q('INSERT INTO users (name,email,password_hash,role) VALUES (?,?,?,\'student\')', [name, email, await bcrypt.hash(temp, 10)]);
   await q('INSERT INTO students (user_id,trainer_id,goal) VALUES (?,?,?)', [r.insertId, req.user.id, goal || 'hipertrofia']);
   res.json({ ok: true, tempPassword: temp });
 }));
@@ -190,7 +190,7 @@ Formato: {"workouts":[{"name":"Treino A — Peito e Tríceps","exercises":[{"exe
       await q('INSERT INTO workout_exercises (workout_id,exercise_id,position,sets,reps,load_kg,rest_s) VALUES (?,?,?,?,?,0,?)',
         [r.insertId, e.exercise_id, i, Math.min(6, Math.max(1, +e.sets || 3)), Math.min(30, Math.max(1, +e.reps || 10)), Math.min(300, +e.rest_s || 60)]);
   }
-  await q('INSERT INTO ai_plans (student_id,kind,feedback) VALUES (?,"treino",?)', [sid, fb || null]);
+  await q('INSERT INTO ai_plans (student_id,kind,feedback) VALUES (?,\'treino\',?)', [sid, fb || null]);
 }
 
 async function genDiet(sid, p, fb) {
@@ -208,14 +208,14 @@ Formato: {"meals":[{"name":"Café da manhã","foods":[{"food":"Ovos mexidos","qt
   const meals = (out.meals || []).slice(0, 8).map(m => ({ name: String(m.name || 'Refeição').slice(0, 40),
     foods: (m.foods || []).slice(0, 10).map(f => ({ food: String(f.food || '').slice(0, 60), qty: String(f.qty || '').slice(0, 30), kcal: Math.round(+f.kcal) || 0 })) })).filter(m => m.foods.length);
   if (!meals.length) throw new Error('dieta inválida');
-  await q('INSERT INTO ai_plans (student_id,kind,feedback,content) VALUES (?,"dieta",?,?)',
+  await q('INSERT INTO ai_plans (student_id,kind,feedback,content) VALUES (?,\'dieta\',?,?)',
     [sid, fb || null, JSON.stringify({ kcal, protein, carbs, fat, meals, notes: String(out.notes || '').slice(0, 300) })]);
 }
 
 app.get('/api/me/ai', S, h(async (req, res) => {
   const sid = await studentId(req.user.id);
   const [profile] = await q('SELECT * FROM ai_profiles WHERE student_id=?', [sid]);
-  const [d] = await q('SELECT content FROM ai_plans WHERE student_id=? AND kind="dieta" ORDER BY id DESC LIMIT 1', [sid]);
+  const [d] = await q('SELECT content FROM ai_plans WHERE student_id=? AND kind=\'dieta\' ORDER BY id DESC LIMIT 1', [sid]);
   const ws = await q('SELECT name FROM workouts WHERE student_id=? AND archived=0 ORDER BY id', [sid]);
   res.json({ profile: profile || null, diet: d ? JSON.parse(d.content) : null, workouts: ws.map(w => w.name) });
 }));
@@ -243,4 +243,4 @@ app.post('/api/me/ai/plan', S, h(async (req, res) => {
 }));
 
 if (require.main === module) app.listen(process.env.PORT || 3000, () => console.log('Pump Eido em http://localhost:3000'));
-module.exports = app; // a Vercel usa este export
+module.exports = app;
